@@ -12,6 +12,7 @@ io.on("connection", socket => {
   users.add(socket.id);
   console.log("User connected:", socket.id);
 
+  // gjej partner
   socket.on("findPartner", () => {
     let partner = null;
     for (let userId of users) {
@@ -29,11 +30,12 @@ io.on("connection", socket => {
       socket.emit("partnerFound", partner);
       io.to(partner).emit("partnerFound", socket.id);
     } else {
+      // asnjë partner – thjesht prit
       socket.emit("waitingForPartner");
     }
   });
 
-  // Kur dikush shtyp Next
+  // kur dikush shtyp NEXT
   socket.on("next", () => {
     const partnerId = socket.partnerId;
     if (partnerId && io.sockets.sockets.get(partnerId)) {
@@ -41,10 +43,10 @@ io.on("connection", socket => {
       io.sockets.sockets.get(partnerId).partnerId = null;
     }
     socket.partnerId = null;
-    socket.emit("autoFind");
+    socket.emit("findPartner");
   });
 
-  // Kur partneri del nga lidhja
+  // kur partneri del nga lidhja
   socket.on("disconnect", () => {
     users.delete(socket.id);
     if (socket.partnerId && io.sockets.sockets.get(socket.partnerId)) {

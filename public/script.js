@@ -1,6 +1,5 @@
 const socket = io();
 
-// STUN + TURN
 const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -16,11 +15,13 @@ let pc;
 let localStream;
 let currentPeerId;
 
+// Fillo kamerën
 async function initCamera() {
   localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   document.getElementById("localVideo").srcObject = localStream;
 }
 
+// Krijo lidhjen
 function createPeerConnection() {
   pc = new RTCPeerConnection(ICE_SERVERS);
   pc.ontrack = e => {
@@ -29,7 +30,8 @@ function createPeerConnection() {
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 }
 
-function disconnectAndFindNewPartner() {
+// Shkëput dhe kërko partner të ri
+function reconnect() {
   if (pc) {
     pc.close();
     pc = null;
@@ -38,18 +40,16 @@ function disconnectAndFindNewPartner() {
   socket.emit("findPartner");
 }
 
-// Kur një përdorues shtyp “Next”
+// Kur shtypet butoni NEXT
 document.getElementById("nextBtn").addEventListener("click", () => {
-  socket.emit("next"); // njofton serverin
-  disconnectAndFindNewPartner(); // rifillon vet për atë që e shtypi
+  socket.emit("next");
+  reconnect();
 });
 
-// Kur partneri tjetër shtyp “Next” → edhe kjo pajisje kalon automatikisht
-socket.on("partnerNexted", () => {
-  disconnectAndFindNewPartner();
-});
+// Kur partneri tjetër shtyp NEXT
+socket.on("partnerNexted", () => reconnect());
 
-// Kur serveri gjen partner të ri
+// Kur serveri gjen partner
 socket.on("partnerFound", async partnerId => {
   currentPeerId = partnerId;
   createPeerConnection();
@@ -59,6 +59,7 @@ socket.on("partnerFound", async partnerId => {
   socket.emit("offer", { offer, to: partnerId });
 });
 
+// Kur vjen ofertë nga partneri
 socket.on("offer", async data => {
   createPeerConnection();
   await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -67,25 +68,28 @@ socket.on("offer", async data => {
   socket.emit("answer", { answer, to: data.from });
 });
 
+// Kur merr përgjigje
 socket.on("answer", async data => {
   await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
 });
 
+// ICE Candidate
 socket.on("candidate", async data => {
   try {
     await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
   } catch (e) {
-    console.error("Error adding ice candidate", e);
+    console.error("Error adding ICE candidate:", e);
   }
 });
 
+// Kur partneri largohet → rifillo vetvetiu
+socket.on("partnerLeft", () => reconnect());
+
+// Në pritje për partner → rifillo vet (pa tekst)
 socket.on("waitingForPartner", () => {
-  console.log("Duke kërkuar partner...");
+  socket.emit("findPartner");
 });
 
-socket.on("partnerDisconnected", () => {
-  disconnectAndFindNewPartner();
-});
-
+// Fillo gjithçka
 initCamera();
 socket.emit("findPartner");
