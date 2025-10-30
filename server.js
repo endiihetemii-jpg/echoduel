@@ -33,7 +33,7 @@ io.on("connection", socket => {
     }
   });
 
-  // Kur dikush shtyp “Next”
+  // Kur dikush shtyp Next
   socket.on("next", () => {
     const partnerId = socket.partnerId;
     if (partnerId && io.sockets.sockets.get(partnerId)) {
@@ -41,15 +41,16 @@ io.on("connection", socket => {
       io.sockets.sockets.get(partnerId).partnerId = null;
     }
     socket.partnerId = null;
-    socket.emit("waitingForPartner");
+    socket.emit("autoFind");
   });
 
-  // Kur partneri largohet
+  // Kur partneri del nga lidhja
   socket.on("disconnect", () => {
     users.delete(socket.id);
     if (socket.partnerId && io.sockets.sockets.get(socket.partnerId)) {
-      io.to(socket.partnerId).emit("partnerDisconnected");
-      io.sockets.sockets.get(socket.partnerId).partnerId = null;
+      const partnerId = socket.partnerId;
+      io.to(partnerId).emit("partnerLeft");
+      io.sockets.sockets.get(partnerId).partnerId = null;
     }
     console.log("User disconnected:", socket.id);
   });
