@@ -15,13 +15,13 @@ let pc;
 let localStream;
 let currentPeerId;
 
-// Fillo kamerën
+// aktivizo kamerën
 async function initCamera() {
   localStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: true });
   document.getElementById("localVideo").srcObject = localStream;
 }
 
-// Krijo lidhjen
+// krijo lidhjen
 function createPeerConnection() {
   pc = new RTCPeerConnection(ICE_SERVERS);
   pc.ontrack = e => {
@@ -30,7 +30,7 @@ function createPeerConnection() {
   localStream.getTracks().forEach(track => pc.addTrack(track, localStream));
 }
 
-// Shkëput dhe kërko partner të ri
+// shkëput dhe rifillo automatikisht
 function reconnect() {
   if (pc) {
     pc.close();
@@ -40,16 +40,17 @@ function reconnect() {
   socket.emit("findPartner");
 }
 
-// Kur shtypet butoni NEXT
+// manual NEXT (për raste testimi)
 document.getElementById("nextBtn").addEventListener("click", () => {
   socket.emit("next");
   reconnect();
 });
 
-// Kur partneri tjetër shtyp NEXT
-socket.on("partnerNexted", () => reconnect());
+// kur partneri shtyp next ose del — rifillo vetvetiu
+socket.on("forceNext", () => reconnect());
+socket.on("autoFind", () => reconnect());
 
-// Kur serveri gjen partner
+// gjetje partneri
 socket.on("partnerFound", async partnerId => {
   currentPeerId = partnerId;
   createPeerConnection();
@@ -59,7 +60,7 @@ socket.on("partnerFound", async partnerId => {
   socket.emit("offer", { offer, to: partnerId });
 });
 
-// Kur vjen ofertë nga partneri
+// kur vjen ofertë
 socket.on("offer", async data => {
   createPeerConnection();
   await pc.setRemoteDescription(new RTCSessionDescription(data.offer));
@@ -68,12 +69,12 @@ socket.on("offer", async data => {
   socket.emit("answer", { answer, to: data.from });
 });
 
-// Kur merr përgjigje
+// përgjigjja
 socket.on("answer", async data => {
   await pc.setRemoteDescription(new RTCSessionDescription(data.answer));
 });
 
-// ICE Candidate
+// ICE candidate
 socket.on("candidate", async data => {
   try {
     await pc.addIceCandidate(new RTCIceCandidate(data.candidate));
@@ -82,14 +83,11 @@ socket.on("candidate", async data => {
   }
 });
 
-// Kur partneri largohet → rifillo vetvetiu
-socket.on("partnerLeft", () => reconnect());
-
-// Në pritje për partner → rifillo vet (pa tekst)
+// kur nuk ka partner → rifillo vet
 socket.on("waitingForPartner", () => {
-  socket.emit("findPartner");
+  setTimeout(() => socket.emit("findPartner"), 1000);
 });
 
-// Fillo gjithçka
+// nis gjithçka
 initCamera();
 socket.emit("findPartner");
