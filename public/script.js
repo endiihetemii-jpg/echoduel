@@ -1,122 +1,171 @@
-// 🔗 Lidhje automatike me serverin publik (me LocalTunnel)
-const socket = io(window.location.origin.replace(/^http/, "https"), { transports: ["websocket"] });
-
-const localVideo = document.getElementById("localVideo");
+// public/script.js
+const localVideo  = document.getElementById("localVideo");
 const remoteVideo = document.getElementById("remoteVideo");
-const startBtn = document.getElementById("startBtn");
-const nextBtn = document.getElementById("nextBtn");
-const switchCamBtn = document.getElementById("switchCamBtn");
-const chatBox = document.getElementById("chatBox");
-const messageInput = document.getElementById("messageInput");
-const sendBtn = document.getElementById("sendBtn");
+const startBtn    = document.getElementById("startBtn");
+const nextBtn     = document.getElementById("nextBtn");
+const flipBtn     = document.getElementById("flipBtn");
+const msgInput    = document.getElementById("msgInput");
+const sendBtn     = document.getElementById("sendBtn");
+const messages    = document.getElementById("messages");
 
-let peerConnection;
-let localStream;
-let currentFacing = "user";
-const config = { iceServers: [{ urls: "stun:stun.l.google.com:19302" }] };
+const socket = io(); // i lidhur me të njëjtin host
 
-async function startCamera() {
-  localStream = await navigator.mediaDevices.getUserMedia({
-    video: { facingMode: currentFacing },
-    audio: true
-  });
-  localVideo.srcObject = localStream;
+// ——— KTU: STUN + TURN (OpenRelay falas)
+const ICE_SERVERS = {
+  iceServers: [
+    { urls: "stun:stun.l.google.com:19302" },
+    {
+      urls: "turn:openrelay.metered.ca:80",
+      username: "openrelayproject",
+      credential: "openrelayproject"
+    }
+  ]
+};
+
+let pc;               // RTCPeerConnection
+let currentPeerId;    // socket id i palës
+let localStream;      // kamera/mikrofoni
+let usingFront = true;
+
+// helper
+function logChat(text, mine = false) {
+  const p = document.createElement("p");
+  p.textContent = text;
+  p.style.margin = "4px 0";
+  if (mine) p.style.fontWeight = "600";
+  messages.appendChild(p);
+  messages.scrollTop = messages.scrollHeight;
 }
 
-startBtn.onclick = async () => {
-  await startCamera();
-  startBtn.disabled = true;
-  nextBtn.disabled = false;
-  switchCamBtn.disabled = false;
-  chatBox.innerHTML = "<p>⏳ Duke kërkuar partner...</p>";
-  socket.emit("next");
+// ndez kamerën
+async function ensureMedia() {
+  if (localStream) return localStream;
+  const constraints = {
+    audio: true,
+    video: { facingMode: usingFront ? "user" : "environment" }
+  };
+  localStream = await navigator.mediaDevices.getUserMedia(constraints);
+  localVideo.srcObject = localStream;
+  await localVideo.play();
+  return localStream;
+}
+
+function createPeer() {
+  if (pc) pc.close();
+  pc = new RTCPeerConnection(ICE_SERVERS);
+
+  // kur vijnë kandidatë ICE nga browseri ynë
+  pc.onicecandidate = (e) => {
+    if (e.candidate && currentPeerId) {
+      socket.emit("signal-ice", { to: currentPeerId, candidate: e.candidate });
+    }
+  };
+
+  // kur vijnë track-ët e palës
+  pc.ontrack = (e) => {
+    remoteVideo.srcObject = e.streams[0];
+    remoteVideo.play().catch(()=>{});
+  };
+
+  // shto stream-in tonë
+  localStream.getTracks().forEach(t => pc.addTrack(t, localStream));
+}
+
+async function start() {
+  try {
+    await ensureMedia();
+    socket.emit("next", { currentPeerId }); // futu në radhë ose kërko partner të ri
+    startBtn.disabled = true;
+  } catch (err) {
+    alert("Gabim me kamerën: " + err.message);
+  }
+}
+
+// sinjalizimi nga serveri
+socket.on("status", (s) => {
+  logChat("Status: " + s);
+});
+
+socket.on("matched", async ({ peerId, initiator }) => {
+  currentPeerId = peerId;
+  logChat("U lidhët me: " + peerId.slice(0,6));
+  await ensureMedia();
+  createPeer();
+
+  if (initiator) {
+    const offer = await pc.createOffer();
+    await pc.setLocalDescription(offer);
+    socket.emit("signal-offer", { to: currentPeerId, sdp: offer });
+  }
+});
+
+socket.on("signal-offer", async ({ from, sdp }) => {
+  currentPeerId = from;
+  await ensureMedia();
+  createPeer();
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+  const answer = await pc.createAnswer();
+  await pc.setLocalDescription(answer);
+  socket.emit("signal-answer", { to: currentPeerId, sdp: answer });
+});
+
+socket.on("signal-answer", async ({ sdp }) => {
+  await pc.setRemoteDescription(new RTCSessionDescription(sdp));
+});
+
+socket.on("signal-ice", async ({ candidate }) => {
+  try {
+    await pc.addIceCandidate(new RTCIceCandidate(candidate));
+  } catch (_) {}
+});
+
+socket.on("peer-left", () => {
+  logChat("Pala doli. Shtyp NEXT për partner tjetër.");
+  if (pc) pc.close();
+  pc = null;
+  currentPeerId = null;
+});
+
+// chat
+sendBtn.onclick = () => {
+  const text = msgInput.value.trim();
+  if (!text || !currentPeerId) return;
+  socket.emit("chat", { to: currentPeerId, text });
+  logChat("Ti: " + text, true);
+  msgInput.value = "";
+};
+msgInput.addEventListener("keydown", (e) => {
+  if (e.key === "Enter") sendBtn.onclick();
+});
+socket.on("chat", ({ from, text }) => {
+  logChat("Ai: " + text);
+});
+
+// UI
+startBtn.onclick = start;
+nextBtn.onclick  = () => {
+  socket.emit("next", { currentPeerId });
+  if (pc) pc.close();
+  pc = null;
+  currentPeerId = null;
+  logChat("Duke kërkuar partner tjetër…");
 };
 
-nextBtn.onclick = () => {
-  socket.emit("next");
-  chatBox.innerHTML = "<p>🔄 Duke kërkuar partner të ri...</p>";
-  remoteVideo.srcObject = null;
-};
-
-switchCamBtn.onclick = async () => {
-  currentFacing = currentFacing === "user" ? "environment" : "user";
-  localStream.getTracks().forEach(track => track.stop());
-  await startCamera();
-  if (peerConnection) {
-    const videoTrack = localStream.getVideoTracks()[0];
-    const sender = peerConnection.getSenders().find(s => s.track.kind === "video");
-    if (sender) sender.replaceTrack(videoTrack);
+// ndërrimi i kamerës në celular
+flipBtn.onclick = async () => {
+  usingFront = !usingFront;
+  if (!localStream) return;
+  // ndalo track-et ekzistuese
+  localStream.getTracks().forEach(t => t.stop());
+  localStream = null;
+  await ensureMedia();
+  if (pc) {
+    // zëvendëso video track në peerconnection
+    const senders = pc.getSenders();
+    const newVideoTrack = localStream.getVideoTracks()[0];
+    const videoSender = senders.find(s => s.track && s.track.kind === "video");
+    if (videoSender && newVideoTrack) {
+      await videoSender.replaceTrack(newVideoTrack);
+    }
   }
 };
-
-socket.on("waiting", (msg) => {
-  chatBox.innerHTML = `<p>${msg}</p>`;
-});
-
-socket.on("matched", () => {
-  chatBox.innerHTML = "<p>🎥 U lidhët me një partner!</p>";
-  startConnection();
-});
-
-socket.on("partner-left", () => {
-  chatBox.innerHTML += "<p>❌ Partneri u largua.</p>";
-  remoteVideo.srcObject = null;
-});
-
-function startConnection() {
-  peerConnection = new RTCPeerConnection(config);
-
-  localStream.getTracks().forEach(track => peerConnection.addTrack(track, localStream));
-
-  peerConnection.ontrack = event => {
-    remoteVideo.srcObject = event.streams[0];
-  };
-
-  peerConnection.onicecandidate = event => {
-    if (event.candidate) socket.emit("candidate", event.candidate);
-  };
-
-  socket.on("offer", async (offer) => {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(offer));
-    const answer = await peerConnection.createAnswer();
-    await peerConnection.setLocalDescription(answer);
-    socket.emit("answer", answer);
-  });
-
-  socket.on("answer", async (answer) => {
-    await peerConnection.setRemoteDescription(new RTCSessionDescription(answer));
-  });
-
-  socket.on("candidate", async (candidate) => {
-    await peerConnection.addIceCandidate(new RTCIceCandidate(candidate));
-  });
-
-  createOffer();
-}
-
-async function createOffer() {
-  const offer = await peerConnection.createOffer();
-  await peerConnection.setLocalDescription(offer);
-  socket.emit("offer", offer);
-}
-
-// CHAT
-sendBtn.onclick = sendMessage;
-messageInput.addEventListener("keypress", e => { if (e.key === "Enter") sendMessage(); });
-
-function sendMessage() {
-  const message = messageInput.value;
-  if (message.trim() === "") return;
-  appendMessage("Ti", message);
-  socket.emit("message", message);
-  messageInput.value = "";
-}
-
-socket.on("message", msg => appendMessage("Tjetri", msg));
-
-function appendMessage(sender, message) {
-  const div = document.createElement("div");
-  div.textContent = `${sender}: ${message}`;
-  chatBox.appendChild(div);
-  chatBox.scrollTop = chatBox.scrollHeight;
-}
