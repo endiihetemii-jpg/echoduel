@@ -1,43 +1,59 @@
-import express from "express";
-import http from "http";
-import { Server } from "socket.io";
-import path from "path";
-import { fileURLToPath } from "url";
-
-const __filename = fileURLToPath(import.meta.url);
-const __dirname = path.dirname(__filename);
-
+const express = require("express");
 const app = express();
-const server = http.createServer(app);
-const io = new Server(server);
+const http = require("http").createServer(app);
+const io = require("socket.io")(http);
+const path = require("path");
 
-app.use(express.static(path.join(__dirname, "../public")));
+app.use(express.static(path.join(__dirname, "public")));
 
-io.on("connection", (socket) => {
-  console.log("✅ New user connected:", socket.id);
+const users = new Set();
 
-  socket.on("offer", (data) => {
-    socket.broadcast.emit("offer", data);
+io.on("connection", socket => {
+  users.add(socket.id);
+  console.log("User connected:", socket.id);
+
+  socket.on("findPartner", () => {
+    let partner = null;
+    for (let userId of users) {
+      const userSocket = io.sockets.sockets.get(userId);
+      if (userId !== socket.id && userSocket && !userSocket.partnerId) {
+        partner = userId;
+        break;
+      }
+    }
+
+    if (partner) {
+      socket.partnerId = partner;
+      io.sockets.sockets.get(partner).partnerId = socket.id;
+
+      socket.emit("partnerFound", partner);
+      io.to(partner).emit("partnerFound", socket.id);
+    } else {
+      socket.emit("waitingForPartner");
+    }
   });
 
-  socket.on("answer", (data) => {
-    socket.broadcast.emit("answer", data);
+  // Kur dikush shtyp “Next”
+  socket.on("next", () => {
+    const partnerId = socket.partnerId;
+    if (partnerId && io.sockets.sockets.get(partnerId)) {
+      io.to(partnerId).emit("partnerNexted");
+      io.sockets.sockets.get(partnerId).partnerId = null;
+    }
+    socket.partnerId = null;
+    socket.emit("waitingForPartner");
   });
 
-  socket.on("ice-candidate", (data) => {
-    socket.broadcast.emit("ice-candidate", data);
-  });
-
-  socket.on("message", (data) => {
-    io.emit("message", data);
-  });
-
+  // Kur partneri largohet
   socket.on("disconnect", () => {
-    console.log("❌ User disconnected:", socket.id);
+    users.delete(socket.id);
+    if (socket.partnerId && io.sockets.sockets.get(socket.partnerId)) {
+      io.to(socket.partnerId).emit("partnerDisconnected");
+      io.sockets.sockets.get(socket.partnerId).partnerId = null;
+    }
+    console.log("User disconnected:", socket.id);
   });
 });
 
-const PORT = 3000;
-server.listen(PORT, "0.0.0.0", () => {
-  console.log(`✅ EchoDuel server running at http://localhost:${PORT}`);
-});
+const PORT = process.env.PORT || 5000;
+http.listen(PORT, () => console.log("Server running on port", PORT));

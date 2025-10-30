@@ -1,6 +1,6 @@
 const socket = io();
 
-// KTU: STUN + TURN
+// STUN + TURN
 const ICE_SERVERS = {
   iceServers: [
     { urls: "stun:stun.l.google.com:19302" },
@@ -38,18 +38,18 @@ function disconnectAndFindNewPartner() {
   socket.emit("findPartner");
 }
 
-// Kur njëra shtyp "Next"
+// Kur një përdorues shtyp “Next”
 document.getElementById("nextBtn").addEventListener("click", () => {
-  socket.emit("next");
-  disconnectAndFindNewPartner();
+  socket.emit("next"); // njofton serverin
+  disconnectAndFindNewPartner(); // rifillon vet për atë që e shtypi
 });
 
-// Nëse partneri tjetër shtyp "Next"
+// Kur partneri tjetër shtyp “Next” → edhe kjo pajisje kalon automatikisht
 socket.on("partnerNexted", () => {
   disconnectAndFindNewPartner();
 });
 
-// Kur serveri gjen partner
+// Kur serveri gjen partner të ri
 socket.on("partnerFound", async partnerId => {
   currentPeerId = partnerId;
   createPeerConnection();
